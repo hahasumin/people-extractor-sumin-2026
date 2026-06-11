@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>RMIT People Page Extractor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <h1>RMIT People Page Extractor</h1>
+
+    <section>
+      <h2>How to use</h2>
+      <ol>
+        <li>Open the RMIT People page.</li>
+        <li>Right click near the staff list and choose <strong>Inspect</strong>.</li>
+        <li>Select the container that includes the staff list.</li>
+        <li>Right click → <strong>Copy → Copy outerHTML</strong>.</li>
+        <li>Paste it below and click <strong>Extract</strong>.</li>
+      </ol>
+    </section>
+
+    <textarea id="htmlInput" placeholder="Paste HTML here..."></textarea>
+
+    <div>
+      <button onclick="extractPeople()">Extract</button>
+      <button onclick="clearAll()">Clear</button>
+    </div>
+
+    <h2>Results</h2>
+    <p id="status">No results yet.</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Copy</th>
+          <th>URL</th>
+          <th>Copy</th>
+        </tr>
+      </thead>
+      <tbody id="results"></tbody>
+    </table>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
