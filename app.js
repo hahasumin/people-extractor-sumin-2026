@@ -1,5 +1,7 @@
 const AEM_PREFIX = '/content/rmit/au/en';
+const AEM_VN_PREFIX = '/content/rmit/vn/en'; // 베트남 접두사 추가
 const RMIT_DOMAIN = 'https://www.rmit.edu.au';
+const RMIT_VN_DOMAIN = 'https://www.rmit.edu.vn'; // 베트남 도메인 추가
 const BAD_ABS_PREFIX = '/content/rmit-ui/en';
  
 const WORKER_URL = 'https://people-extractor-sumin-2026-redirect.hahasuminn.workers.dev';
@@ -23,7 +25,7 @@ async function extractPeople() {
  
   const tasks = [];
 
-  // [핵심 변경] 본문 내의 모든 <a> 태그를 HTML에 등장하는 '순서대로' 전부 훑습니다.
+  // 본문 내의 모든 <a> 태그를 HTML에 등장하는 '순서대로' 전부 훑습니다.
   const allAnchors = container.querySelectorAll('a');
   
   allAnchors.forEach(anchor => {
@@ -31,7 +33,7 @@ async function extractPeople() {
     if (!href) return;
     href = href.trim();
 
-    // 지정해주신 2가지 핵심 주소 패턴만 통과 (나머지 CTA/링크는 완전 무시)
+    // 베트남 상대 경로를 포함한 3가지 핵심 주소 패턴 통과
     if (isTargetUrl(href)) {
       const normalizedHref = normalizeUrl(href);
       let name = '';
@@ -84,11 +86,13 @@ async function extractPeople() {
   }
 }
 
-// [핵심 수정] 타겟 URL 판별 조건을 지정해주신 패턴으로 정확하게 제한
+// 타겟 URL 판별 조건 (베트남 상대 경로 주소 /content/rmit/vn/en 패턴까지 추가 검동)
 function isTargetUrl(href) {
+  if (href.startsWith('javascript:')) return false;
   const isProfile = href.includes('/profiles/');
   const isAcademicStaff = href.includes('contact/staff-contacts/academic-staff'); 
-  return isProfile || isAcademicStaff;
+  const isVnAem = href.includes('/content/rmit/vn/en'); // 베트남 원본 소스 주소 대응
+  return isProfile || isAcademicStaff || isVnAem;
 }
 
 // URL 정규화
@@ -123,8 +127,23 @@ async function resolveUrl(url, currentName) {
   }
  
   url = url.trim();
+
+  // [신규 변경] 이미 베트남 AEM 경로(/content/rmit/vn/en) 형태로 들어왔다면 그대로 유지하고 뱉어내기
+  if (url.startsWith('/content/rmit/vn/en')) {
+    return { name: currentName, status: 'VN Profile (AEM)', url: url };
+  }
  
-  // 1. 이미 프로필 주소인 경우
+  // 풀 도메인 형태의 베트남 프로필 주소 변환 처리
+  if (url.startsWith('https://www.rmit.edu.vn/profiles/') || url.startsWith('http://www.rmit.edu.vn/profiles/')) {
+    const cleanPath = url.replace('https://www.rmit.edu.vn', '').replace('http://www.rmit.edu.vn', '');
+    return {
+      name: currentName,
+      status: 'VN Profile',
+      url: AEM_VN_PREFIX + cleanPath
+    };
+  }
+ 
+  // 1. 호주 내부 프로필 주소인 경우
   if (url.startsWith('/profiles/')) {
     return { name: currentName, status: 'Profile', url: AEM_PREFIX + url };
   }
@@ -157,6 +176,27 @@ async function resolveUrl(url, currentName) {
       }
  
       const finalUrl = data.finalUrl;
+
+      // Worker 리다이렉트 추적 결과가 베트남 AEM 상대 경로일 경우 대응
+      if (finalUrl.includes('/content/rmit/vn/en')) {
+        const vnPathIndex = finalUrl.indexOf('/content/rmit/vn/en');
+        return {
+          name: currentName,
+          status: 'Redirected VN Profile (AEM)',
+          url: finalUrl.substring(vnPathIndex)
+        };
+      }
+
+      // Worker 결과가 베트남 풀 도메인 프로필 주소일 경우 변환
+      if (finalUrl.startsWith('https://www.rmit.edu.vn/profiles/')) {
+        return {
+          name: currentName,
+          status: 'Redirected VN Profile',
+          url: finalUrl.replace(RMIT_VN_DOMAIN, AEM_VN_PREFIX)
+        };
+      }
+
+      // Worker 결과가 호주 프로필 주소인 경우
       if (finalUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
         return {
           name: currentName,
