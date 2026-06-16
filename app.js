@@ -1,5 +1,6 @@
 const AEM_PREFIX = '/content/rmit/au/en';
 const RMIT_DOMAIN = 'https://www.rmit.edu.au';
+const BAD_ABS_PREFIX = 'https://www.rmit.edu.au/content/rmit-ui/en';
  
 const WORKER_URL = 'https://people-extractor-sumin-2026-redirect.hahasuminn.workers.dev';
  
@@ -23,9 +24,15 @@ async function extractPeople() {
   const tasks = [];
  
   for (const anchor of anchors) {
-    const href = anchor.getAttribute('href');
+    let href = anchor.getAttribute('href');
     if (!href) continue;
  
+    // Clean and normalize href before filtering to handle mistakenly entered absolute paths
+    href = href.trim();
+    if (href.startsWith(BAD_ABS_PREFIX)) {
+      href = href.replace(BAD_ABS_PREFIX, '');
+    }
+
     const isProfile = href.includes('/profiles/');
     const isContact = href.includes('/contact/');
  
@@ -86,6 +93,7 @@ async function resolveUrl(url) {
  
   url = url.trim();
  
+  // Handle profile paths
   if (url.startsWith('/profiles/')) {
     return { status: 'Profile', url: AEM_PREFIX + url };
   }
@@ -97,6 +105,7 @@ async function resolveUrl(url) {
     };
   }
  
+  // Handle contact paths (including those that were stripped from BAD_ABS_PREFIX)
   if (url.startsWith('/contact/') || url.startsWith('https://www.rmit.edu.au/contact/')) {
     try {
       const response = await fetch(`${WORKER_URL}/?url=${encodeURIComponent(url)}`);
