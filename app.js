@@ -27,10 +27,12 @@ async function extractPeople() {
     let href = anchor.getAttribute('href');
     if (!href) continue;
  
-    // Clean and normalize href before filtering to handle mistakenly entered absolute paths
     href = href.trim();
+    
+    // Exact match and strip for the mistakenly entered full UI prefix
     if (href.startsWith(BAD_ABS_PREFIX)) {
-      href = href.replace(BAD_ABS_PREFIX, '');
+      href = href.substring(BAD_ABS_PREFIX.length); 
+      // Now becomes: /contact/staff-contacts/academic-staff/t/thai-associate-professor-vinh
     }
 
     const isProfile = href.includes('/profiles/');
@@ -105,7 +107,7 @@ async function resolveUrl(url) {
     };
   }
  
-  // Handle contact paths (including those that were stripped from BAD_ABS_PREFIX)
+  // Handle contact paths (including long paths like /contact/staff-contacts/academic-staff/...)
   if (url.startsWith('/contact/') || url.startsWith('https://www.rmit.edu.au/contact/')) {
     try {
       const response = await fetch(`${WORKER_URL}/?url=${encodeURIComponent(url)}`);
@@ -166,7 +168,7 @@ function renderResults(rows) {
     tdName.textContent = row.name;
     tr.appendChild(tdName);
  
-    // 2. Render Copy Name Button (Event listener approach for browser compatibility)
+    // 2. Render Copy Name Button
     const tdCopyName = document.createElement('td');
     const btnCopyName = document.createElement('button');
     btnCopyName.textContent = 'Copy';
@@ -201,7 +203,6 @@ function renderResults(rows) {
 function copyText(text, buttonElement) {
   navigator.clipboard.writeText(text)
     .then(() => {
-      // Provide visual feedback upon successful copy
       const originalText = buttonElement.textContent;
       buttonElement.textContent = 'Copied!';
       buttonElement.style.backgroundColor = '#4CAF50';
