@@ -1,7 +1,7 @@
 const AEM_PREFIX = '/content/rmit/au/en';
-const AEM_VN_PREFIX = '/content/rmit/vn/en'; // 베트남 접두사 추가
+const AEM_VN_PREFIX = '/content/rmit/vn/en'; // 베트남 접두사
 const RMIT_DOMAIN = 'https://www.rmit.edu.au';
-const RMIT_VN_DOMAIN = 'https://www.rmit.edu.vn'; // 베트남 도메인 추가
+const RMIT_VN_DOMAIN = 'https://www.rmit.edu.vn'; // 베트남 도메인
 const BAD_ABS_PREFIX = '/content/rmit-ui/en';
  
 const WORKER_URL = 'https://people-extractor-sumin-2026-redirect.hahasuminn.workers.dev';
@@ -33,7 +33,7 @@ async function extractPeople() {
     if (!href) return;
     href = href.trim();
 
-    // 베트남 상대 경로를 포함한 3가지 핵심 주소 패턴 통과
+    // 베트남 다양한 경로 패턴을 포함하여 검증 통과
     if (isTargetUrl(href)) {
       const normalizedHref = normalizeUrl(href);
       let name = '';
@@ -86,13 +86,22 @@ async function extractPeople() {
   }
 }
 
-// 타겟 URL 판별 조건 (베트남 상대 경로 주소 /content/rmit/vn/en 패턴까지 추가 검동)
+// [핵심 보완] vn/en 순서, 대소문자 오염, 라이브 URL 도메인 패턴을 모조리 흡수하는 차단막 정의
 function isTargetUrl(href) {
   if (href.startsWith('javascript:')) return false;
-  const isProfile = href.includes('/profiles/');
-  const isAcademicStaff = href.includes('contact/staff-contacts/academic-staff'); 
-  const isVnAem = href.includes('/content/rmit/vn/en'); // 베트남 원본 소스 주소 대응
-  return isProfile || isAcademicStaff || isVnAem;
+  
+  const lowerHref = href.toLowerCase();
+  
+  // 1. 호주/베트남 공통 프로필 키워드 포함 여부
+  const isProfile = lowerHref.includes('/profiles/');
+  // 2. 스태프 연락처 리다이렉트 페이지 여부
+  const isAcademicStaff = lowerHref.includes('contact/staff-contacts/academic-staff'); 
+  // 3. 베트남 AEM 경로 포함 여부 (vn/en)
+  const isVnAem = lowerHref.includes('/content/rmit/vn/en');
+  // 4. 라이브 사이트 웹 도메인 경로 포함 여부 (rmit.edu.vn)
+  const isVnDomain = lowerHref.includes('rmit.edu.vn');
+  
+  return isProfile || isAcademicStaff || isVnAem || isVnDomain;
 }
 
 // URL 정규화
@@ -127,37 +136,50 @@ async function resolveUrl(url, currentName) {
   }
  
   url = url.trim();
+  const lowerUrl = url.toLowerCase();
 
-  // [신규 변경] 이미 베트남 AEM 경로(/content/rmit/vn/en) 형태로 들어왔다면 그대로 유지하고 뱉어내기
-  if (url.startsWith('/content/rmit/vn/en')) {
-    return { name: currentName, status: 'VN Profile (AEM)', url: url };
+  // 이미 베트남 AEM 주소 규칙(/content/rmit/vn/en)을 충족했다면 즉시 반환
+  if (lowerUrl.includes('/content/rmit/vn/en')) {
+    // 혹시 풀 주소 형태로 들어와 있을 수 있으니 위치를 잘라 경로만 보장
+    const idx = lowerUrl.indexOf('/content/rmit/vn/en');
+    return { name: currentName, status: 'VN Profile (AEM)', url: url.substring(idx) };
   }
  
-  // 풀 도메인 형태의 베트남 프로필 주소 변환 처리
-  if (url.startsWith('https://www.rmit.edu.vn/profiles/') || url.startsWith('http://www.rmit.edu.vn/profiles/')) {
-    const cleanPath = url.replace('https://www.rmit.edu.vn', '').replace('http://www.rmit.edu.vn', '');
+  // 라이브 도메인 형태의 베트남 프로필 주소인 경우 깔끔하게 접두사 붙여서 리턴
+  if (lowerUrl.includes('rmit.edu.vn')) {
+    // 도메인 뒷부분 경로만 추출 (예: /en/about/our-people/profile-name 이나 /profiles/profile-name)
+    let cleanPath = url.replace(/https?:\/\/www\.rmit\.edu\.vn/i, '')
+                       .replace(/https?:\/\/rmit\.edu\.vn/i, '');
+    
+    // 만약 주소가 /en/profiles/... 형태로 되어 있다면 /profiles/... 양식으로 통일
+    if (cleanPath.startsWith('/en/')) {
+      cleanPath = cleanPath.substring(3);
+    }
+    
+    // 최종 베트남 주소 형태로 가공하여 뱉기
+    const finalVnUrl = cleanPath.startsWith('/profiles/') ? cleanPath.replace('/profiles/', '/') : cleanPath;
     return {
       name: currentName,
       status: 'VN Profile',
-      url: AEM_VN_PREFIX + cleanPath
+      url: AEM_VN_PREFIX + finalVnUrl
     };
   }
  
   // 1. 호주 내부 프로필 주소인 경우
-  if (url.startsWith('/profiles/')) {
+  if (lowerUrl.startsWith('/profiles/')) {
     return { name: currentName, status: 'Profile', url: AEM_PREFIX + url };
   }
  
-  if (url.startsWith('https://www.rmit.edu.au/profiles/')) {
+  if (lowerUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
     return {
       name: currentName,
       status: 'Profile',
-      url: url.replace(RMIT_DOMAIN, AEM_PREFIX)
+      url: url.replace(/https?:\/\/www\.rmit\.edu\.au/i, AEM_PREFIX)
     };
   }
  
   // 2. 지정된 Academic Staff 주소인 경우 -> Worker를 거쳐 리다이렉트 추적
-  if (url.includes('contact/staff-contacts/academic-staff')) {
+  if (lowerUrl.includes('contact/staff-contacts/academic-staff')) {
     try {
       let targetUrl = url;
       if (url.startsWith('/')) {
@@ -176,10 +198,11 @@ async function resolveUrl(url, currentName) {
       }
  
       const finalUrl = data.finalUrl;
+      const lowerFinalUrl = finalUrl.toLowerCase();
 
-      // Worker 리다이렉트 추적 결과가 베트남 AEM 상대 경로일 경우 대응
-      if (finalUrl.includes('/content/rmit/vn/en')) {
-        const vnPathIndex = finalUrl.indexOf('/content/rmit/vn/en');
+      // Worker 결과가 베트남 주소 규칙인 경우 변환 대응
+      if (lowerFinalUrl.includes('/content/rmit/vn/en')) {
+        const vnPathIndex = lowerFinalUrl.indexOf('/content/rmit/vn/en');
         return {
           name: currentName,
           status: 'Redirected VN Profile (AEM)',
@@ -187,21 +210,23 @@ async function resolveUrl(url, currentName) {
         };
       }
 
-      // Worker 결과가 베트남 풀 도메인 프로필 주소일 경우 변환
-      if (finalUrl.startsWith('https://www.rmit.edu.vn/profiles/')) {
+      if (lowerFinalUrl.includes('rmit.edu.vn')) {
+        let cleanPath = finalUrl.replace(/https?:\/\/www\.rmit\.edu\.vn/i, '').replace(/https?:\/\/rmit\.edu\.vn/i, '');
+        if (cleanPath.startsWith('/en/')) cleanPath = cleanPath.substring(3);
+        const finalVnUrl = cleanPath.startsWith('/profiles/') ? cleanPath.replace('/profiles/', '/') : cleanPath;
         return {
           name: currentName,
           status: 'Redirected VN Profile',
-          url: finalUrl.replace(RMIT_VN_DOMAIN, AEM_VN_PREFIX)
+          url: AEM_VN_PREFIX + finalVnUrl
         };
       }
 
       // Worker 결과가 호주 프로필 주소인 경우
-      if (finalUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
+      if (lowerFinalUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
         return {
           name: currentName,
           status: 'Redirected Profile',
-          url: finalUrl.replace(RMIT_DOMAIN, AEM_PREFIX)
+          url: finalUrl.replace(/https?:\/\/www\.rmit\.edu\.au/i, AEM_PREFIX)
         };
       }
  
