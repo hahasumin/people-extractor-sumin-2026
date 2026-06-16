@@ -34,7 +34,6 @@ async function extractPeople() {
 
     // 1. 만약 요소가 리스트 아이템(<li>)인 경우
     if (el.tagName.toLowerCase() === 'li') {
-      // 해당 li 내부의 모든 하위 요소는 중복 처리되지 않도록 차단 리스트에 추가
       el.querySelectorAll('*').forEach(child => visitedElements.add(child));
       visitedElements.add(el);
 
@@ -61,9 +60,7 @@ async function extractPeople() {
         let name = el.textContent;
         name = cleanName(name);
 
-        // 텍스트가 유효하고 너무 길지 않은 경우(메뉴 전체 글 방지) 리스트에 추가
         if (name && name.length < 100) {
-          // [핵심 수정] 주변 동료 리스트(ul/ol) 중 하나라도 profiles 나 staff-contacts 관련 단어가 묻어있는 패널인지 체크
           const parentUl = el.closest('ul, ol');
           const isProfileArea = parentUl && (
             parentUl.innerHTML.includes('/profiles/') || 
@@ -82,7 +79,7 @@ async function extractPeople() {
         }
       }
     } 
-    // 2. 리스트(li)가 아닌 일반 카드(.icon-feature)나 단독 CTA 버튼인 경우 (기존 로직 유지)
+    // 2. 리스트(li)가 아닌 일반 카드(.icon-feature)나 단독 CTA 버튼인 경우
     else if (el.tagName.toLowerCase() === 'a') {
       visitedElements.add(el);
       let href = el.getAttribute('href');
@@ -159,14 +156,21 @@ function removeUnwantedAreas(container) {
   });
 }
  
-// URL 최종 목적지 분석 (베트남 캠퍼스 분기 포함)
+// URL 최종 목적지 분석 및 베트남 경로 최우선 대응 수정
 async function resolveUrl(url, currentName) {
   if (!url || url.trim() === '' || url.startsWith('javascript:')) {
     return { name: currentName, status: 'Button/Script Link', url: url };
   }
  
   url = url.trim();
+
+  // [핵심 변경 1] 주소가 이미 베트남 AEM 경로(/content/rmit/vn/en)로 시작하는 경우
+  // 그대로 보존하여 즉시 결과로 반환합니다.
+  if (url.startsWith('/content/rmit/vn/en')) {
+    return { name: currentName, status: 'VN Profile (AEM)', url: url };
+  }
  
+  // 2. 풀 도메인 형태의 베트남 프로필 주소인 경우 처리
   if (url.startsWith('https://www.rmit.edu.vn/profiles/') || url.startsWith('http://www.rmit.edu.vn/profiles/')) {
     const cleanPath = url.replace('https://www.rmit.edu.vn', '').replace('http://www.rmit.edu.vn', '');
     return {
@@ -176,6 +180,7 @@ async function resolveUrl(url, currentName) {
     };
   }
  
+  // 3. 호주 내부 상대 경로 프로필 주소인 경우 (/content/rmit/au/en 적용)
   if (url.startsWith('/profiles/')) {
     return { name: currentName, status: 'Profile', url: AEM_AU_PREFIX + url };
   }
@@ -188,6 +193,7 @@ async function resolveUrl(url, currentName) {
     };
   }
  
+  // 4. 지정된 Academic Staff 주소인 경우 -> Worker를 거쳐 리다이렉트 추적
   if (url.includes('contact/staff-contacts/academic-staff')) {
     try {
       let targetUrl = url;
@@ -208,6 +214,16 @@ async function resolveUrl(url, currentName) {
  
       const finalUrl = data.finalUrl;
       
+      // [핵심 변경 2] Worker 추적 끝에 나온 주소가 베트남 AEM 경로이거나 풀 도메인일 때 대응
+      if (finalUrl.includes('/content/rmit/vn/en')) {
+        // 이미 AEM 경로가 포함되어 있다면 해당 상대 경로만 잘라내서 저장
+        const vnPathIndex = finalUrl.indexOf('/content/rmit/vn/en');
+        return {
+          name: currentName,
+          status: 'Redirected VN Profile (AEM)',
+          url: finalUrl.substring(vnPathIndex)
+        };
+      }
       if (finalUrl.startsWith('https://www.rmit.edu.vn/profiles/')) {
         return {
           name: currentName,
@@ -216,6 +232,7 @@ async function resolveUrl(url, currentName) {
         };
       }
 
+      // 리다이렉트 결과가 호주 프로필인 경우
       if (finalUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
         return {
           name: currentName,
@@ -302,3 +319,30 @@ function renderResults(rows) {
   });
  
   status.textContent = `${rows.length} result(s) found.`;
+}
+ 
+function copyText(text, buttonElement) {
+  navigator.clipboard.writeText(text)
+    .then(() => {
+      const originalText = buttonElement.textContent;
+      buttonElement.textContent = 'Copied!';
+      buttonElement.style.backgroundColor = '#4CAF50';
+      buttonElement.style.color = 'white';
+       
+      setTimeout(() => {
+        buttonElement.textContent = originalText;
+        buttonElement.style.backgroundColor = '';
+        buttonElement.style.color = '';
+      }, 1200);
+    })
+    .catch(err => {
+      console.error('Could not copy text: ', err);
+      alert('Copy failed.');
+    });
+}
+ 
+function clearAll() {
+  document.getElementById('htmlInput').value = '';
+  document.getElementById('results').innerHTML = '';
+  document.getElementById('status').textContent = 'No results yet.';
+}
