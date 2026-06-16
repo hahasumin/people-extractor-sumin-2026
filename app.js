@@ -1,7 +1,5 @@
 const AEM_PREFIX = '/content/rmit/au/en';
-const AEM_VN_PREFIX = '/content/rmit/vn/en'; // 베트남 접두사
 const RMIT_DOMAIN = 'https://www.rmit.edu.au';
-const RMIT_VN_DOMAIN = 'https://www.rmit.edu.vn'; // 베트남 도메인
 const BAD_ABS_PREFIX = '/content/rmit-ui/en';
  
 const WORKER_URL = 'https://people-extractor-sumin-2026-redirect.hahasuminn.workers.dev';
@@ -25,7 +23,7 @@ async function extractPeople() {
  
   const tasks = [];
 
-  // 본문 내의 모든 <a> 태그를 HTML에 등장하는 '순서대로' 전부 훑습니다.
+  // [핵심 변경] 본문 내의 모든 <a> 태그를 HTML에 등장하는 '순서대로' 전부 훑습니다.
   const allAnchors = container.querySelectorAll('a');
   
   allAnchors.forEach(anchor => {
@@ -33,7 +31,7 @@ async function extractPeople() {
     if (!href) return;
     href = href.trim();
 
-    // 베트남 다양한 경로 패턴을 포함하여 검증 통과
+    // 지정해주신 2가지 핵심 주소 패턴만 통과 (나머지 CTA/링크는 완전 무시)
     if (isTargetUrl(href)) {
       const normalizedHref = normalizeUrl(href);
       let name = '';
@@ -86,22 +84,11 @@ async function extractPeople() {
   }
 }
 
-// [핵심 보완] vn/en 순서, 대소문자 오염, 라이브 URL 도메인 패턴을 모조리 흡수하는 차단막 정의
+// [핵심 수정] 타겟 URL 판별 조건을 지정해주신 패턴으로 정확하게 제한
 function isTargetUrl(href) {
-  if (href.startsWith('javascript:')) return false;
-  
-  const lowerHref = href.toLowerCase();
-  
-  // 1. 호주/베트남 공통 프로필 키워드 포함 여부
-  const isProfile = lowerHref.includes('/profiles/');
-  // 2. 스태프 연락처 리다이렉트 페이지 여부
-  const isAcademicStaff = lowerHref.includes('contact/staff-contacts/academic-staff'); 
-  // 3. 베트남 AEM 경로 포함 여부 (vn/en)
-  const isVnAem = lowerHref.includes('/content/rmit/vn/en');
-  // 4. 라이브 사이트 웹 도메인 경로 포함 여부 (rmit.edu.vn)
-  const isVnDomain = lowerHref.includes('rmit.edu.vn');
-  
-  return isProfile || isAcademicStaff || isVnAem || isVnDomain;
+  const isProfile = href.includes('/profiles/');
+  const isAcademicStaff = href.includes('contact/staff-contacts/academic-staff'); 
+  return isProfile || isAcademicStaff;
 }
 
 // URL 정규화
@@ -136,50 +123,22 @@ async function resolveUrl(url, currentName) {
   }
  
   url = url.trim();
-  const lowerUrl = url.toLowerCase();
-
-  // 이미 베트남 AEM 주소 규칙(/content/rmit/vn/en)을 충족했다면 즉시 반환
-  if (lowerUrl.includes('/content/rmit/vn/en')) {
-    // 혹시 풀 주소 형태로 들어와 있을 수 있으니 위치를 잘라 경로만 보장
-    const idx = lowerUrl.indexOf('/content/rmit/vn/en');
-    return { name: currentName, status: 'VN Profile (AEM)', url: url.substring(idx) };
-  }
  
-  // 라이브 도메인 형태의 베트남 프로필 주소인 경우 깔끔하게 접두사 붙여서 리턴
-  if (lowerUrl.includes('rmit.edu.vn')) {
-    // 도메인 뒷부분 경로만 추출 (예: /en/about/our-people/profile-name 이나 /profiles/profile-name)
-    let cleanPath = url.replace(/https?:\/\/www\.rmit\.edu\.vn/i, '')
-                       .replace(/https?:\/\/rmit\.edu\.vn/i, '');
-    
-    // 만약 주소가 /en/profiles/... 형태로 되어 있다면 /profiles/... 양식으로 통일
-    if (cleanPath.startsWith('/en/')) {
-      cleanPath = cleanPath.substring(3);
-    }
-    
-    // 최종 베트남 주소 형태로 가공하여 뱉기
-    const finalVnUrl = cleanPath.startsWith('/profiles/') ? cleanPath.replace('/profiles/', '/') : cleanPath;
-    return {
-      name: currentName,
-      status: 'VN Profile',
-      url: AEM_VN_PREFIX + finalVnUrl
-    };
-  }
- 
-  // 1. 호주 내부 프로필 주소인 경우
-  if (lowerUrl.startsWith('/profiles/')) {
+  // 1. 이미 프로필 주소인 경우
+  if (url.startsWith('/profiles/')) {
     return { name: currentName, status: 'Profile', url: AEM_PREFIX + url };
   }
  
-  if (lowerUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
+  if (url.startsWith('https://www.rmit.edu.au/profiles/')) {
     return {
       name: currentName,
       status: 'Profile',
-      url: url.replace(/https?:\/\/www\.rmit\.edu\.au/i, AEM_PREFIX)
+      url: url.replace(RMIT_DOMAIN, AEM_PREFIX)
     };
   }
  
   // 2. 지정된 Academic Staff 주소인 경우 -> Worker를 거쳐 리다이렉트 추적
-  if (lowerUrl.includes('contact/staff-contacts/academic-staff')) {
+  if (url.includes('contact/staff-contacts/academic-staff')) {
     try {
       let targetUrl = url;
       if (url.startsWith('/')) {
@@ -198,35 +157,11 @@ async function resolveUrl(url, currentName) {
       }
  
       const finalUrl = data.finalUrl;
-      const lowerFinalUrl = finalUrl.toLowerCase();
-
-      // Worker 결과가 베트남 주소 규칙인 경우 변환 대응
-      if (lowerFinalUrl.includes('/content/rmit/vn/en')) {
-        const vnPathIndex = lowerFinalUrl.indexOf('/content/rmit/vn/en');
-        return {
-          name: currentName,
-          status: 'Redirected VN Profile (AEM)',
-          url: finalUrl.substring(vnPathIndex)
-        };
-      }
-
-      if (lowerFinalUrl.includes('rmit.edu.vn')) {
-        let cleanPath = finalUrl.replace(/https?:\/\/www\.rmit\.edu\.vn/i, '').replace(/https?:\/\/rmit\.edu\.vn/i, '');
-        if (cleanPath.startsWith('/en/')) cleanPath = cleanPath.substring(3);
-        const finalVnUrl = cleanPath.startsWith('/profiles/') ? cleanPath.replace('/profiles/', '/') : cleanPath;
-        return {
-          name: currentName,
-          status: 'Redirected VN Profile',
-          url: AEM_VN_PREFIX + finalVnUrl
-        };
-      }
-
-      // Worker 결과가 호주 프로필 주소인 경우
-      if (lowerFinalUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
+      if (finalUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
         return {
           name: currentName,
           status: 'Redirected Profile',
-          url: finalUrl.replace(/https?:\/\/www\.rmit\.edu\.au/i, AEM_PREFIX)
+          url: finalUrl.replace(RMIT_DOMAIN, AEM_PREFIX)
         };
       }
  
