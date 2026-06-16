@@ -18,76 +18,55 @@ async function extractPeople() {
   const container = document.createElement('div');
   container.innerHTML = html;
  
-  // 상하단 노이즈 제거
+  // 상하단 노이즈 영역 제거
   removeUnwantedAreas(container);
  
   const tasks = [];
-  const iconFeatures = container.querySelectorAll('.icon-feature, .iconfeature');
-  const processedAnchors = new Set();
 
-  // 1. 기존 인물 카드 형태 처리
-  iconFeatures.forEach(card => {
-    const h3NameElement = card.querySelector('h3.h5, h3[role="heading"]');
-    if (!h3NameElement) return;
-
-    let name = h3NameElement.textContent;
-    const anchor = card.querySelector('a');
-    let href = anchor ? anchor.getAttribute('href') : null;
-
-    if (anchor) {
-      processedAnchors.add(anchor);
-    }
-
-    name = cleanName(name);
-
-    if (href) {
-      href = href.trim();
-      if (isTargetUrl(href)) {
-        const normalizedHref = normalizeUrl(href);
-        tasks.push(
-          resolveUrl(normalizedHref).then(result => ({
-            name,
-            status: result.status,
-            url: result.url
-          }))
-        );
-      }
-    } else {
-      tasks.push(
-        Promise.resolve({ name, status: 'No link attached', url: '' })
-      );
-    }
-  });
-
-  // 2. 본문 내 모든 링크 중 'profiles' 또는 'contact' 주소를 가진 요소 처리 (CTA 버튼 포함)
+  // [핵심 변경] 본문 내의 모든 <a> 태그를 HTML에 등장하는 '순서대로' 전부 훑습니다.
   const allAnchors = container.querySelectorAll('a');
+  
   allAnchors.forEach(anchor => {
-    if (processedAnchors.has(anchor)) return;
-
     let href = anchor.getAttribute('href');
     if (!href) return;
     href = href.trim();
 
+    // 지정해주신 2가지 핵심 주소 패턴만 통과 (나머지 CTA/링크는 완전 무시)
     if (isTargetUrl(href)) {
       const normalizedHref = normalizeUrl(href);
-      
-      let name = anchor.textContent; 
+      let name = '';
+
+      // 1. 만약 이 링크가 .icon-feature (인물 카드) 내부에 속해 있다면, 카드 내의 H3 이름을 먼저 탐색
+      const parentCard = anchor.closest('.icon-feature, .iconfeature');
+      if (parentCard) {
+        const h3NameElement = parentCard.querySelector('h3.h5, h3[role="heading"]');
+        if (h3NameElement) {
+          name = h3NameElement.textContent;
+        }
+      }
+
+      // 2. 카드 형태가 아니거나 H3 이름을 못 찾았다면 <a> 태그 자체의 텍스트나 속성 탐색 (일반 CTA 버튼 대응)
+      if (!name) {
+        name = anchor.textContent;
+      }
       name = cleanName(name);
 
-      // 이름 텍스트가 없는 경우 속성값 우회 적용
+      // 이름 텍스트가 비어있을 경우 대안 속성 적용
       if (!name && anchor.getAttribute('title')) {
         name = anchor.getAttribute('title');
       }
       if (!name && anchor.getAttribute('aria-label')) {
         name = anchor.getAttribute('aria-label');
       }
+      // 끝까지 이름이 없는 아이콘 버튼 등의 경우 임시 명칭 부여
       if (!name) {
-        name = href.includes('contact') ? `[Contact CTA Button]` : `[Profile Link]`;
+        name = href.includes('staff-contacts') ? `[Academic Staff CTA]` : `[Profile Link]`;
       }
 
+      // 비동기 URL 분석 처리를 순서대로 tasks 배열에 push
       tasks.push(
-        resolveUrl(normalizedHref).then(result => ({
-          name,
+        resolveUrl(normalizedHref, name).then(result => ({
+          name: result.name,
           status: result.status,
           url: result.url
         }))
@@ -96,6 +75,7 @@ async function extractPeople() {
   });
  
   try {
+    // HTML 순서가 그대로 보장된 채 결과가 출력됩니다.
     const rows = await Promise.all(tasks);
     renderResults(rows);
   } catch (error) {
@@ -104,12 +84,14 @@ async function extractPeople() {
   }
 }
 
-// 추출 타겟 조건: 오직 profiles 나 contact 가 들어있는 링크만 수집
+// [핵심 수정] 타겟 URL 판별 조건을 지정해주신 패턴으로 정확하게 제한
 function isTargetUrl(href) {
-  return href.includes('/profiles/') || href.includes('contact');
+  const isProfile = href.includes('/profiles/');
+  const isAcademicStaff = href.includes('contact/staff-contacts/academic-staff'); 
+  return isProfile || isAcademicStaff;
 }
 
-// URL 전규화
+// URL 정규화
 function normalizeUrl(href) {
   if (href.startsWith('javascript:')) return href;
   if (href.startsWith(RMIT_DOMAIN)) {
@@ -121,7 +103,7 @@ function normalizeUrl(href) {
   return href;
 }
  
-// 불필요 영역 제거
+// 불필요 영역 제거 로직
 function removeUnwantedAreas(container) {
   const selectors = [
     'script', 'style', 'header', 'footer',
@@ -134,28 +116,29 @@ function removeUnwantedAreas(container) {
   });
 }
  
-// [로직 전면 단순화] 원하시는 흐름대로 조건 검사 후 주소를 그대로 반환합니다.
-async function resolveUrl(url) {
+// URL 최종 목적지 분석 및 도메인 치환
+async function resolveUrl(url, currentName) {
   if (!url || url.trim() === '' || url.startsWith('javascript:')) {
-    return { status: 'Button/Script Link', url: url };
+    return { name: currentName, status: 'Button/Script Link', url: url };
   }
  
   url = url.trim();
  
-  // 1. 이미 프로필 주소인 경우 -> 규칙대로 변환 후 그대로 뱉음
+  // 1. 이미 프로필 주소인 경우
   if (url.startsWith('/profiles/')) {
-    return { status: 'Profile', url: AEM_PREFIX + url };
+    return { name: currentName, status: 'Profile', url: AEM_PREFIX + url };
   }
  
   if (url.startsWith('https://www.rmit.edu.au/profiles/')) {
     return {
+      name: currentName,
       status: 'Profile',
       url: url.replace(RMIT_DOMAIN, AEM_PREFIX)
     };
   }
  
-  // 2. contact 주소인 경우 -> Worker 돌려서 나온 최종 목적지를 가감 없이 그대로 뱉음
-  if (url.startsWith('/contact') || url.includes('contact')) {
+  // 2. 지정된 Academic Staff 주소인 경우 -> Worker를 거쳐 리다이렉트 추적
+  if (url.includes('contact/staff-contacts/academic-staff')) {
     try {
       let targetUrl = url;
       if (url.startsWith('/')) {
@@ -166,30 +149,30 @@ async function resolveUrl(url) {
       const data = await response.json();
  
       if (!data.finalUrl) {
-        return { status: 'Redirect not resolved', url: url };
+        return { name: currentName, status: 'Redirect not resolved', url: url };
       }
  
       if (data.status === 404) {
-        return { status: '404', url: data.finalUrl };
+        return { name: currentName, status: '404', url: data.finalUrl };
       }
  
-      // [수정] 내비게이션 필터 제거: Worker가 찾아낸 주소 그대로 도메인 치환하여 반환
       const finalUrl = data.finalUrl;
       if (finalUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
         return {
+          name: currentName,
           status: 'Redirected Profile',
           url: finalUrl.replace(RMIT_DOMAIN, AEM_PREFIX)
         };
       }
  
-      return { status: 'Resolved Destination', url: finalUrl };
+      return { name: currentName, status: 'Resolved Destination', url: finalUrl };
     } catch (error) {
       console.error(error);
-      return { status: 'Redirect Error', url: url };
+      return { name: currentName, status: 'Redirect Error', url: url };
     }
   }
  
-  return { status: 'Link', url: url };
+  return { name: currentName, status: 'Link', url: url };
 }
  
 function cleanText(text) {
