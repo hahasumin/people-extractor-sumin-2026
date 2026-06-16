@@ -21,7 +21,6 @@ async function extractPeople() {
    const isContact = href.includes('/contact/');
    if (!isProfile && !isContact) continue;
    const name = cleanName(anchor.textContent);
-   // 병렬 처리를 위해 프로미스를 배열에 담음
    tasks.push(
      resolveUrl(href).then(result => ({
        name,
@@ -31,7 +30,6 @@ async function extractPeople() {
    );
  }
  try {
-   // 모든 URL 검증을 동시에 실행 (속도 최적화)
    const rows = await Promise.all(tasks);
    renderResults(rows);
  } catch (error) {
@@ -106,26 +104,21 @@ function renderResults(rows) {
  }
  rows.forEach(row => {
    const tr = document.createElement('tr');
-   // 이름 열
    const tdName = document.createElement('td');
    tdName.textContent = row.name;
    tr.appendChild(tdName);
-   // 이름 복사 버튼 열
    const tdCopyName = document.createElement('td');
    const btnCopyName = document.createElement('button');
    btnCopyName.textContent = 'Copy';
    btnCopyName.addEventListener('click', () => copyText(row.name, btnCopyName));
    tdCopyName.appendChild(btnCopyName);
    tr.appendChild(tdCopyName);
-   // 상태 열
    const tdStatus = document.createElement('td');
    tdStatus.textContent = row.status;
    tr.appendChild(tdStatus);
-   // URL 열
    const tdUrl = document.createElement('td');
    tdUrl.textContent = row.url;
    tr.appendChild(tdUrl);
-   // URL 복사 버튼 열
    const tdCopyUrl = document.createElement('td');
    const btnCopyUrl = document.createElement('button');
    btnCopyUrl.textContent = 'Copy';
@@ -154,7 +147,7 @@ function copyText(text, buttonElement) {
      alert('Copy failed. Please copy manually.');
    });
 }
-function clearAll() {
+function clearInterval() {
  document.getElementById('htmlInput').value = '';
  document.getElementById('results').innerHTML = '';
  document.getElementById('status').textContent = 'No results yet.';
