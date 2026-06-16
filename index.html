@@ -1,49 +1,57 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>RMIT People Page Extractor</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="utf-8">
+<title>RMIT People Page Extractor</title>
+<style>
+   /* 간단한 보기 좋은 스타일 추가 */
+   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 20px; background-color: #f5f5f7; color: #333; }
+   main { max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+   textarea { width: 100%; height: 200px; margin: 15px 0; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-family: monospace; box-sizing: border-box; }
+   button { padding: 10px 20px; font-size: 14px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; margin-right: 10px; }
+   button:first-of-type { background-color: #001e62; color: white; }
+   button:last-of-type { background-color: #e0e0e0; color: #333; }
+   table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+   th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+   th { background-color: #f8f9fa; font-weight: 6px; }
+   tr:nth-child(even) { background-color: #f9f9f9; }
+   #status { font-weight: bold; color: #001e62; margin: 15px 0; }
+   td button { padding: 4px 8px; font-size: 12px; background-color: #e1ecf4; color: #39739d; border: 1px solid #7aa7c7; border-radius: 3px; }
+</style>
 </head>
 <body>
-  <main>
-    <h1>RMIT People Page Extractor</h1>
-
-    <section>
-      <h2>How to use</h2>
-      <ol>
-        <li>Open the RMIT People page.</li>
-        <li>Right click near the staff list and choose <strong>Inspect</strong>.</li>
-        <li>Select the container that includes the staff list.</li>
-        <li>Right click → <strong>Copy → Copy outerHTML</strong>.</li>
-        <li>Paste it below and click <strong>Extract</strong>.</li>
-      </ol>
-    </section>
-
-    <textarea id="htmlInput" placeholder="Paste HTML here..."></textarea>
-
-    <div>
-      <button onclick="extractPeople()">Extract</button>
-      <button onclick="clearAll()">Clear</button>
-    </div>
-
-    <h2>Results</h2>
-    <p id="status">No results yet.</p>
-
-    <table>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Copy</th>
-          <th>Status</th>
-          <th>URL</th>
-          <th>Copy</th>
-        </tr>
-      </thead>
-      <tbody id="results"></tbody>
-    </table>
-  </main>
-
-  <script src="app.js"></script>
+<main>
+<h1>RMIT People Page Extractor</h1>
+<section>
+<h2>How to use</h2>
+<ol>
+<li>Open the RMIT People page.</li>
+<li>Right click near the staff list and choose <strong>Inspect</strong>.</li>
+<li>Select the container that includes the staff list.</li>
+<li>Right click → <strong>Copy → Copy outerHTML</strong>.</li>
+<li>Paste it below and click <strong>Extract</strong>.</li>
+</ol>
+</section>
+<textarea id="htmlInput" placeholder="Paste HTML here..."></textarea>
+<div>
+<button onclick="extractPeople()">Extract</button>
+<button onclick="clearAll()">Clear</button>
+</div>
+<h2>Results</h2>
+<p id="status">No results yet.</p>
+<table>
+<thead>
+<tr>
+<th>Name</th>
+<th>Copy</th>
+<th>Status</th>
+<th>URL</th>
+<th>Copy</th>
+</tr>
+</thead>
+<tbody id="results"></tbody>
+</table>
+</main>
+<script src="app.js"></script>
 </body>
 </html>
