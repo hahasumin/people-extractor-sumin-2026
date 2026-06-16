@@ -7,7 +7,7 @@ const WORKER_URL = 'https://people-extractor-sumin-2026-redirect.hahasuminn.work
 async function extractPeople() {
   const status = document.getElementById('status');
   const html = document.getElementById('htmlInput').value;
-  
+   
   if (!html.trim()) {
     status.textContent = 'Please paste HTML content first.';
     return;
@@ -20,65 +20,110 @@ async function extractPeople() {
  
   removeUnwantedAreas(container);
  
-  const anchors = container.querySelectorAll('a');
   const tasks = [];
- 
-  for (const anchor of anchors) {
-    let href = anchor.getAttribute('href');
-    if (!href) continue;
- 
-    href = href.trim();
+  
+  // [구조 수정] 문서 전체에서 a를 바로 찾지 않고, 개별 인물 카드(.icon-feature)를 먼저 찾아 루프를 돕니다.
+  const iconFeatures = container.querySelectorAll('.icon-feature');
+  
+  // 중복 추출 방지를 위해 이미 처리한 a 태그를 추적할 Set 생성
+  const processedAnchors = new Set();
+
+  // 1. icon-feature 컴포넌트 형태로 존재하는 인물 카드들 우선 처리
+  iconFeatures.forEach(card => {
+    // 카드 내부에서 h3 이름 요소 탐색
+    const h3NameElement = card.querySelector('h3.h5, h3[role="heading"]');
+    if (!h3NameElement) return;
+
+    let name = h3NameElement.textContent;
     
-    // [Step 1] Check if it's a target link by checking containing keywords first
-    const isProfile = href.includes('/profiles/');
-    const isContact = href.includes('contact/'); // Flexible check without boundary slashes
- 
-    if (!isProfile && !isContact) continue;
- 
-    // [Step 2] Normalize the URL by stripping domain and bad prefixes
-    // Case A: Full domain absolute URL
-    if (href.startsWith(RMIT_DOMAIN)) {
-      href = href.substring(RMIT_DOMAIN.length);
-    }
-    // Case B: Embedded AEM UI path (e.g., /content/rmit-ui/en/contact/...)
-    if (href.startsWith(BAD_ABS_PREFIX)) {
-      href = href.substring(BAD_ABS_PREFIX.length);
+    // 카드 내부에서 링크 요소 탐색
+    const anchor = card.querySelector('a');
+    let href = anchor ? anchor.getAttribute('href') : null;
+
+    if (anchor) {
+      processedAnchors.add(anchor); // 이 링크는 처리 완료로 등록
     }
 
-    // Default: Use anchor text as the initial name
-    let name = anchor.textContent;
- 
-    // Check if the current link is inside an 'iconfeature' component
-    const iconFeatureContainer = anchor.closest('.iconfeature');
-    
-    if (iconFeatureContainer) {
-      // Find the h3 tag that contains the actual name within the component
-      const h3NameElement = iconFeatureContainer.querySelector('h3.h5');
-      if (h3NameElement) {
-        name = h3NameElement.textContent; // Use the actual name instead of "Find out more"
-      }
-    }
- 
-    // Trim whitespace and clean up the text
+    // 이름 정제
     name = cleanName(name);
- 
+
+    // 만약 링크가 있는 경우에만 URL 검증 후 태스크 추가 (링크 없는 사람은 명단에서 제외하거나 빈값 처리 가능)
+    if (href) {
+      href = href.trim();
+      if (isTargetUrl(href)) {
+        const normalizedHref = normalizeUrl(href);
+        
+        tasks.push(
+          resolveUrl(normalizedHref).then(result => ({
+            name,
+            status: result.status,
+            url: result.url
+          }))
+        );
+      }
+    } else {
+      // 링크가 아예 없는 사람(예: Members 탭의 Dr Aayushi Badhwar)은 빈 링크 상태로 UI에 표시는 되도록 추가
+      tasks.push(
+        Promise.resolve({
+          name,
+          status: 'No link attached',
+          url: ''
+        })
+      );
+    }
+  });
+
+  // 2. 카드 형태가 아닌 본문 내 일반 텍스트 링크(Standard text links) 처리
+  const allAnchors = container.querySelectorAll('a');
+  allAnchors.forEach(anchor => {
+    // 이미 위의 icon-feature 루프에서 처리된 링크라면 패스
+    if (processedAnchors.has(anchor)) return;
+
+    let href = anchor.getAttribute('href');
+    if (!href) return;
+
+    href = href.trim();
+    if (!isTargetUrl(href)) return;
+
+    const normalizedHref = normalizeUrl(href);
+    let name = anchor.textContent; // 일반 텍스트 링크는 링크 텍스트 자체를 이름으로 사용
+    name = cleanName(name);
+
     tasks.push(
-      resolveUrl(href).then(result => ({
+      resolveUrl(normalizedHref).then(result => ({
         name,
         status: result.status,
         url: result.url
       }))
     );
-  }
+  });
  
   try {
-    // Process worker requests in parallel for better performance
+    // 비동기 작업 병렬 처리
     const rows = await Promise.all(tasks);
     renderResults(rows);
   } catch (error) {
     console.error(error);
     status.textContent = 'An error occurred while extracting data.';
   }
+}
+
+// 대상 URL 검증 헬퍼 함수
+function isTargetUrl(href) {
+  const isProfile = href.includes('/profiles/');
+  const isContact = href.includes('contact/');
+  return isProfile || isContact;
+}
+
+// URL 정규화 헬퍼 함수
+function normalizeUrl(href) {
+  if (href.startsWith(RMIT_DOMAIN)) {
+    href = href.substring(RMIT_DOMAIN.length);
+  }
+  if (href.startsWith(BAD_ABS_PREFIX)) {
+    href = href.substring(BAD_ABS_PREFIX.length);
+  }
+  return href;
 }
  
 function removeUnwantedAreas(container) {
@@ -112,7 +157,7 @@ async function resolveUrl(url) {
     };
   }
  
-  // 2. Handle contact paths (Ensure it has domain prefix before sending to Worker)
+  // 2. Handle contact paths
   if (url.startsWith('/contact/') || url.startsWith('https://www.rmit.edu.au/contact/')) {
     try {
       let targetUrl = url;
@@ -131,7 +176,6 @@ async function resolveUrl(url) {
         return { status: '404', url: data.finalUrl };
       }
  
-      // If successfully redirected to a profile page, format it to AEM short path
       if (data.finalUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
         return {
           status: 'Redirected',
@@ -218,7 +262,7 @@ function copyText(text, buttonElement) {
       buttonElement.textContent = 'Copied!';
       buttonElement.style.backgroundColor = '#4CAF50';
       buttonElement.style.color = 'white';
-      
+       
       setTimeout(() => {
         buttonElement.textContent = originalText;
         buttonElement.style.backgroundColor = '';
