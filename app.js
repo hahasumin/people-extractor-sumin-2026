@@ -18,14 +18,14 @@ async function extractPeople() {
   const container = document.createElement('div');
   container.innerHTML = html;
  
-  // 필요 없는 영역 제거 (CTA 버튼이 지워지지 않도록 수정됨)
+  // [수정] 본문 파괴를 막기 위해 개선된 정제 함수 호출
   removeUnwantedAreas(container);
  
   const tasks = [];
-  const iconFeatures = container.querySelectorAll('.icon-feature, .iconfeature'); // 클래스명 변형 대응
+  const iconFeatures = container.querySelectorAll('.icon-feature, .iconfeature');
   const processedAnchors = new Set();
 
-  // 1. icon-feature 컴포넌트 형태로 존재하는 인물 카드들 우선 처리
+  // 1. icon-feature 컴포넌트 형태 처리
   iconFeatures.forEach(card => {
     const h3NameElement = card.querySelector('h3.h5, h3[role="heading"]');
     if (!h3NameElement) return;
@@ -64,10 +64,9 @@ async function extractPeople() {
     }
   });
 
-  // 2. 카드 형태가 아닌 본문 내 일반 텍스트 링크 및 CTA 버튼 처리
+  // 2. 본문 내 일반 텍스트 링크 및 모든 CTA 버튼 처리
   const allAnchors = container.querySelectorAll('a');
   allAnchors.forEach(anchor => {
-    // 이미 1번에서 처리된 링크라면 패스
     if (processedAnchors.has(anchor)) return;
 
     let href = anchor.getAttribute('href');
@@ -78,9 +77,13 @@ async function extractPeople() {
 
     const normalizedHref = normalizeUrl(href);
     
-    // 내부에 이미지(화살표 아이콘 등)가 있어도 텍스트만 깔끔하게 추출
     let name = anchor.textContent; 
     name = cleanName(name);
+
+    // 버튼 내부에 텍스트가 아예 비어있는 예외 케이스 처리
+    if (!name && anchor.getAttribute('title')) {
+      name = anchor.getAttribute('title');
+    }
 
     tasks.push(
       resolveUrl(normalizedHref).then(result => ({
@@ -117,9 +120,11 @@ function normalizeUrl(href) {
 }
  
 function removeUnwantedAreas(container) {
-  // [수정] 본문 내 유용한 링크까지 통째로 날려버릴 수 있는 '[data-elastic-exclude]' 항목을 제거했습니다.
+  // [수정] 본문 데이터가 유실되지 않도록 태그 기반 무차별 삭제 대신, 
+  // 상·하단 레이아웃 명확한 클래스/ID 영역 위주로 삭제 대상을 변경했습니다.
   const selectors = [
-    'script', 'style', 'svg', 'nav', 'header', 'footer',
+    'script', 'style', 'svg', 'header', 'footer',
+    '.top-nav__wrapper', '#root-experiencefragment', '#campaign-notification-master',
     '.top-nav', '.breadcrumb', '.breadcrumbs', '.footer'
   ];
  
