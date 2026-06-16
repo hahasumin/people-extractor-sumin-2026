@@ -18,14 +18,14 @@ async function extractPeople() {
   const container = document.createElement('div');
   container.innerHTML = html;
  
-  // 상하단 뼈대 정제 (본문 파괴 방지)
+  // 상하단 노이즈 제거
   removeUnwantedAreas(container);
  
   const tasks = [];
   const iconFeatures = container.querySelectorAll('.icon-feature, .iconfeature');
   const processedAnchors = new Set();
 
-  // 1. 기존 인물 카드 형태 처리 (VAS, IVV 등 카드 레이아웃)
+  // 1. 기존 인물 카드 형태 처리
   iconFeatures.forEach(card => {
     const h3NameElement = card.querySelector('h3.h5, h3[role="heading"]');
     if (!h3NameElement) return;
@@ -59,7 +59,7 @@ async function extractPeople() {
     }
   });
 
-  // 2. [핵심 수정] 본문 내 모든 일반 링크 및 "모든 종류의 CTA 버튼" 수집
+  // 2. 본문 내 모든 링크 중 'profiles' 또는 'contact' 주소를 가진 요소 처리 (CTA 버튼 포함)
   const allAnchors = container.querySelectorAll('a');
   allAnchors.forEach(anchor => {
     if (processedAnchors.has(anchor)) return;
@@ -68,33 +68,27 @@ async function extractPeople() {
     if (!href) return;
     href = href.trim();
 
-    // 주소 조건(/profiles/, contact/)에 맞거나, '버튼' 역할을 하는 CTA 태그인 경우 모두 통과
-    const isButtonRole = anchor.getAttribute('role') === 'button';
-    const isCtaClass = anchor.className.toLowerCase().includes('btn') || anchor.className.toLowerCase().includes('cta');
-    
-    if (isTargetUrl(href) || isButtonRole || isCtaClass) {
+    if (isTargetUrl(href)) {
       const normalizedHref = normalizeUrl(href);
       
       let name = anchor.textContent; 
       name = cleanName(name);
 
-      // 텍스트가 비어있고 title 속성이 있으면 그것을 이름으로 사용
+      // 이름 텍스트가 없는 경우 속성값 우회 적용
       if (!name && anchor.getAttribute('title')) {
         name = anchor.getAttribute('title');
       }
-      // 텍스트도 없고 title도 없으면 aria-label 대용 사용
       if (!name && anchor.getAttribute('aria-label')) {
         name = anchor.getAttribute('aria-label');
       }
-      // 정말 아무것도 없으면 주소나 요소를 구별할 수 있게 임시 이름 부여
       if (!name) {
-        name = `[CTA Button] ${href}`;
+        name = href.includes('contact') ? `[Contact CTA Button]` : `[Profile Link]`;
       }
 
       tasks.push(
         resolveUrl(normalizedHref).then(result => ({
           name,
-          status: isTargetUrl(href) ? result.status : 'General CTA/Button',
+          status: result.status,
           url: result.url
         }))
       );
@@ -110,16 +104,14 @@ async function extractPeople() {
   }
 }
 
-// target 주소 판별 함수
+// 추출 타겟 조건: 오직 profiles 나 contact 가 들어있는 링크만 수집
 function isTargetUrl(href) {
-  const isProfile = href.includes('/profiles/');
-  const isContact = href.includes('contact/');
-  return isProfile || isContact;
+  return href.includes('/profiles/') || href.includes('contact');
 }
 
-// URL 정규화
+// URL 전규화
 function normalizeUrl(href) {
-  if (href.startsWith('javascript:')) return href; // 스크립트 형태 주소 보존
+  if (href.startsWith('javascript:')) return href;
   if (href.startsWith(RMIT_DOMAIN)) {
     href = href.substring(RMIT_DOMAIN.length);
   }
@@ -129,7 +121,7 @@ function normalizeUrl(href) {
   return href;
 }
  
-// 불필요 영역 제거 로직 개선
+// 불필요 영역 제거
 function removeUnwantedAreas(container) {
   const selectors = [
     'script', 'style', 'header', 'footer',
@@ -142,7 +134,7 @@ function removeUnwantedAreas(container) {
   });
 }
  
-// URL 최종 목적지 분석 (Profiles / Contact 분기 처리)
+// [로직 전면 단순화] 원하시는 흐름대로 조건 검사 후 주소를 그대로 반환합니다.
 async function resolveUrl(url) {
   if (!url || url.trim() === '' || url.startsWith('javascript:')) {
     return { status: 'Button/Script Link', url: url };
@@ -150,6 +142,7 @@ async function resolveUrl(url) {
  
   url = url.trim();
  
+  // 1. 이미 프로필 주소인 경우 -> 규칙대로 변환 후 그대로 뱉음
   if (url.startsWith('/profiles/')) {
     return { status: 'Profile', url: AEM_PREFIX + url };
   }
@@ -161,10 +154,11 @@ async function resolveUrl(url) {
     };
   }
  
-  if (url.startsWith('/contact/') || url.startsWith('https://www.rmit.edu.au/contact/')) {
+  // 2. contact 주소인 경우 -> Worker 돌려서 나온 최종 목적지를 가감 없이 그대로 뱉음
+  if (url.startsWith('/contact') || url.includes('contact')) {
     try {
       let targetUrl = url;
-      if (url.startsWith('/contact/')) {
+      if (url.startsWith('/')) {
         targetUrl = RMIT_DOMAIN + url;
       }
 
@@ -179,21 +173,23 @@ async function resolveUrl(url) {
         return { status: '404', url: data.finalUrl };
       }
  
-      if (data.finalUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
+      // [수정] 내비게이션 필터 제거: Worker가 찾아낸 주소 그대로 도메인 치환하여 반환
+      const finalUrl = data.finalUrl;
+      if (finalUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
         return {
-          status: 'Redirected',
-          url: data.finalUrl.replace(RMIT_DOMAIN, AEM_PREFIX)
+          status: 'Redirected Profile',
+          url: finalUrl.replace(RMIT_DOMAIN, AEM_PREFIX)
         };
       }
  
-      return { status: 'Not a profile page', url: data.finalUrl };
+      return { status: 'Resolved Destination', url: finalUrl };
     } catch (error) {
       console.error(error);
-      return { status: 'Redirect not resolved', url: url };
+      return { status: 'Redirect Error', url: url };
     }
   }
  
-  return { status: 'Page Link', url: url };
+  return { status: 'Link', url: url };
 }
  
 function cleanText(text) {
