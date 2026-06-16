@@ -1,5 +1,7 @@
-const AEM_PREFIX = '/content/rmit/au/en';
-const RMIT_DOMAIN = 'https://www.rmit.edu.au';
+const AEM_AU_PREFIX = '/content/rmit/au/en';
+const AEM_VN_PREFIX = '/content/rmit/vn/en'; // 베트남 전용 접두사 추가
+const RMIT_AU_DOMAIN = 'https://www.rmit.edu.au';
+const RMIT_VN_DOMAIN = 'https://www.rmit.edu.vn'; // 베트남 도메인 추가
 const BAD_ABS_PREFIX = '/content/rmit-ui/en';
  
 const WORKER_URL = 'https://people-extractor-sumin-2026-redirect.hahasuminn.workers.dev';
@@ -22,10 +24,9 @@ async function extractPeople() {
   removeUnwantedAreas(container);
  
   const tasks = [];
-
-  // [핵심 변경] 본문 내의 모든 <a> 태그를 HTML에 등장하는 '순서대로' 전부 훑습니다.
   const allAnchors = container.querySelectorAll('a');
   
+  // 본문 내의 모든 <a> 태그를 HTML에 등장하는 '순서대로' 전부 훑습니다.
   allAnchors.forEach(anchor => {
     let href = anchor.getAttribute('href');
     if (!href) return;
@@ -84,8 +85,9 @@ async function extractPeople() {
   }
 }
 
-// [핵심 수정] 타겟 URL 판별 조건을 지정해주신 패턴으로 정확하게 제한
+// 타겟 URL 판별 조건 (호주/베트남 구분 없이 패턴 체크)
 function isTargetUrl(href) {
+  if (href.startsWith('javascript:')) return false;
   const isProfile = href.includes('/profiles/');
   const isAcademicStaff = href.includes('contact/staff-contacts/academic-staff'); 
   return isProfile || isAcademicStaff;
@@ -94,9 +96,13 @@ function isTargetUrl(href) {
 // URL 정규화
 function normalizeUrl(href) {
   if (href.startsWith('javascript:')) return href;
-  if (href.startsWith(RMIT_DOMAIN)) {
-    href = href.substring(RMIT_DOMAIN.length);
+  
+  // 호주 도메인 생략 처리
+  if (href.startsWith(RMIT_AU_DOMAIN)) {
+    href = href.substring(RMIT_AU_DOMAIN.length);
   }
+  // 베트남 도메인은 분기 처리를 위해 원본 주소 형태를 유지하도록 분기 시점에 처리합니다.
+  
   if (href.startsWith(BAD_ABS_PREFIX)) {
     href = href.substring(BAD_ABS_PREFIX.length);
   }
@@ -116,7 +122,7 @@ function removeUnwantedAreas(container) {
   });
 }
  
-// URL 최종 목적지 분석 및 도메인 치환
+// URL 최종 목적지 분석 및 도메인 치환 (베트남 캠퍼스 대응 완비)
 async function resolveUrl(url, currentName) {
   if (!url || url.trim() === '' || url.startsWith('javascript:')) {
     return { name: currentName, status: 'Button/Script Link', url: url };
@@ -124,25 +130,35 @@ async function resolveUrl(url, currentName) {
  
   url = url.trim();
  
-  // 1. 이미 프로필 주소인 경우
+  // [신규] 1. 베트남 프로필 주소인 경우 (/content/rmit/vn/en 적용)
+  if (url.startsWith('https://www.rmit.edu.vn/profiles/') || url.startsWith('http://www.rmit.edu.vn/profiles/')) {
+    const cleanPath = url.replace('https://www.rmit.edu.vn', '').replace('http://www.rmit.edu.vn', '');
+    return {
+      name: currentName,
+      status: 'VN Profile',
+      url: AEM_VN_PREFIX + cleanPath
+    };
+  }
+ 
+  // 2. 호주 내부 프로필 주소인 경우 (/content/rmit/au/en 적용)
   if (url.startsWith('/profiles/')) {
-    return { name: currentName, status: 'Profile', url: AEM_PREFIX + url };
+    return { name: currentName, status: 'Profile', url: AEM_AU_PREFIX + url };
   }
  
   if (url.startsWith('https://www.rmit.edu.au/profiles/')) {
     return {
       name: currentName,
       status: 'Profile',
-      url: url.replace(RMIT_DOMAIN, AEM_PREFIX)
+      url: url.replace(RMIT_AU_DOMAIN, AEM_AU_PREFIX)
     };
   }
  
-  // 2. 지정된 Academic Staff 주소인 경우 -> Worker를 거쳐 리다이렉트 추적
+  // 3. 지정된 Academic Staff 주소인 경우 -> Worker를 거쳐 리다이렉트 추적
   if (url.includes('contact/staff-contacts/academic-staff')) {
     try {
       let targetUrl = url;
       if (url.startsWith('/')) {
-        targetUrl = RMIT_DOMAIN + url;
+        targetUrl = RMIT_AU_DOMAIN + url;
       }
 
       const response = await fetch(`${WORKER_URL}/?url=${encodeURIComponent(targetUrl)}`);
@@ -157,11 +173,22 @@ async function resolveUrl(url, currentName) {
       }
  
       const finalUrl = data.finalUrl;
+      
+      // Worker에서 추적된 최종 주소가 베트남 프로필일 경우 대응
+      if (finalUrl.startsWith('https://www.rmit.edu.vn/profiles/')) {
+        return {
+          name: currentName,
+          status: 'Redirected VN Profile',
+          url: finalUrl.replace(RMIT_VN_DOMAIN, AEM_VN_PREFIX)
+        };
+      }
+
+      // Worker에서 추적된 최종 주소가 호주 프로필인 경우
       if (finalUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
         return {
           name: currentName,
           status: 'Redirected Profile',
-          url: finalUrl.replace(RMIT_DOMAIN, AEM_PREFIX)
+          url: finalUrl.replace(RMIT_AU_DOMAIN, AEM_AU_PREFIX)
         };
       }
  
@@ -255,5 +282,4 @@ function copyText(text, buttonElement) {
 function clearAll() {
   document.getElementById('htmlInput').value = '';
   document.getElementById('results').innerHTML = '';
-  document.getElementById('status').textContent = 'No results yet.';
-}
+  document.getElementById('
