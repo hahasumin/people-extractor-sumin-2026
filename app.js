@@ -1,6 +1,6 @@
 const AEM_PREFIX = '/content/rmit/au/en';
 const RMIT_DOMAIN = 'https://www.rmit.edu.au';
-const BAD_ABS_PREFIX = 'https://www.rmit.edu.au/content/rmit-ui/en';
+const BAD_ABS_PREFIX = '/content/rmit-ui/en';
  
 const WORKER_URL = 'https://people-extractor-sumin-2026-redirect.hahasuminn.workers.dev';
  
@@ -29,17 +29,22 @@ async function extractPeople() {
  
     href = href.trim();
     
-    // Exact match and strip for the mistakenly entered full UI prefix
-    if (href.startsWith(BAD_ABS_PREFIX)) {
-      href = href.substring(BAD_ABS_PREFIX.length); 
-      // Now becomes: /contact/staff-contacts/academic-staff/t/thai-associate-professor-vinh
-    }
-
+    // [Step 1] Check if it's a target link by checking containing keywords first
     const isProfile = href.includes('/profiles/');
-    const isContact = href.includes('/contact/');
+    const isContact = href.includes('contact/'); // Flexible check without boundary slashes
  
     if (!isProfile && !isContact) continue;
  
+    // [Step 2] Normalize the URL by stripping domain and bad prefixes
+    // Case A: Full domain absolute URL
+    if (href.startsWith(RMIT_DOMAIN)) {
+      href = href.substring(RMIT_DOMAIN.length);
+    }
+    // Case B: Embedded AEM UI path (e.g., /content/rmit-ui/en/contact/...)
+    if (href.startsWith(BAD_ABS_PREFIX)) {
+      href = href.substring(BAD_ABS_PREFIX.length);
+    }
+
     // Default: Use anchor text as the initial name
     let name = anchor.textContent;
  
@@ -95,7 +100,7 @@ async function resolveUrl(url) {
  
   url = url.trim();
  
-  // Handle profile paths
+  // 1. Handle profile paths
   if (url.startsWith('/profiles/')) {
     return { status: 'Profile', url: AEM_PREFIX + url };
   }
@@ -107,10 +112,15 @@ async function resolveUrl(url) {
     };
   }
  
-  // Handle contact paths (including long paths like /contact/staff-contacts/academic-staff/...)
+  // 2. Handle contact paths (Ensure it has domain prefix before sending to Worker)
   if (url.startsWith('/contact/') || url.startsWith('https://www.rmit.edu.au/contact/')) {
     try {
-      const response = await fetch(`${WORKER_URL}/?url=${encodeURIComponent(url)}`);
+      let targetUrl = url;
+      if (url.startsWith('/contact/')) {
+        targetUrl = RMIT_DOMAIN + url;
+      }
+
+      const response = await fetch(`${WORKER_URL}/?url=${encodeURIComponent(targetUrl)}`);
       const data = await response.json();
  
       if (!data.finalUrl) {
@@ -121,10 +131,11 @@ async function resolveUrl(url) {
         return { status: '404', url: data.finalUrl };
       }
  
+      // If successfully redirected to a profile page, format it to AEM short path
       if (data.finalUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
         return {
           status: 'Redirected',
-          url: data.finalUrl.replace('https://www.rmit.edu.au', '/content/rmit/au/en')
+          url: data.finalUrl.replace(RMIT_DOMAIN, AEM_PREFIX)
         };
       }
  
