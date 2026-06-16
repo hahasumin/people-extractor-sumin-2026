@@ -18,14 +18,14 @@ async function extractPeople() {
   const container = document.createElement('div');
   container.innerHTML = html;
  
-  // [수정] 본문 파괴를 막기 위해 개선된 정제 함수 호출
+  // 상하단 뼈대 정제 (본문 파괴 방지)
   removeUnwantedAreas(container);
  
   const tasks = [];
   const iconFeatures = container.querySelectorAll('.icon-feature, .iconfeature');
   const processedAnchors = new Set();
 
-  // 1. icon-feature 컴포넌트 형태 처리
+  // 1. 기존 인물 카드 형태 처리 (VAS, IVV 등 카드 레이아웃)
   iconFeatures.forEach(card => {
     const h3NameElement = card.querySelector('h3.h5, h3[role="heading"]');
     if (!h3NameElement) return;
@@ -44,7 +44,6 @@ async function extractPeople() {
       href = href.trim();
       if (isTargetUrl(href)) {
         const normalizedHref = normalizeUrl(href);
-        
         tasks.push(
           resolveUrl(normalizedHref).then(result => ({
             name,
@@ -55,43 +54,51 @@ async function extractPeople() {
       }
     } else {
       tasks.push(
-        Promise.resolve({
-          name,
-          status: 'No link attached',
-          url: ''
-        })
+        Promise.resolve({ name, status: 'No link attached', url: '' })
       );
     }
   });
 
-  // 2. 본문 내 일반 텍스트 링크 및 모든 CTA 버튼 처리
+  // 2. [핵심 수정] 본문 내 모든 일반 링크 및 "모든 종류의 CTA 버튼" 수집
   const allAnchors = container.querySelectorAll('a');
   allAnchors.forEach(anchor => {
     if (processedAnchors.has(anchor)) return;
 
     let href = anchor.getAttribute('href');
     if (!href) return;
-
     href = href.trim();
-    if (!isTargetUrl(href)) return;
 
-    const normalizedHref = normalizeUrl(href);
+    // 주소 조건(/profiles/, contact/)에 맞거나, '버튼' 역할을 하는 CTA 태그인 경우 모두 통과
+    const isButtonRole = anchor.getAttribute('role') === 'button';
+    const isCtaClass = anchor.className.toLowerCase().includes('btn') || anchor.className.toLowerCase().includes('cta');
     
-    let name = anchor.textContent; 
-    name = cleanName(name);
+    if (isTargetUrl(href) || isButtonRole || isCtaClass) {
+      const normalizedHref = normalizeUrl(href);
+      
+      let name = anchor.textContent; 
+      name = cleanName(name);
 
-    // 버튼 내부에 텍스트가 아예 비어있는 예외 케이스 처리
-    if (!name && anchor.getAttribute('title')) {
-      name = anchor.getAttribute('title');
+      // 텍스트가 비어있고 title 속성이 있으면 그것을 이름으로 사용
+      if (!name && anchor.getAttribute('title')) {
+        name = anchor.getAttribute('title');
+      }
+      // 텍스트도 없고 title도 없으면 aria-label 대용 사용
+      if (!name && anchor.getAttribute('aria-label')) {
+        name = anchor.getAttribute('aria-label');
+      }
+      // 정말 아무것도 없으면 주소나 요소를 구별할 수 있게 임시 이름 부여
+      if (!name) {
+        name = `[CTA Button] ${href}`;
+      }
+
+      tasks.push(
+        resolveUrl(normalizedHref).then(result => ({
+          name,
+          status: isTargetUrl(href) ? result.status : 'General CTA/Button',
+          url: result.url
+        }))
+      );
     }
-
-    tasks.push(
-      resolveUrl(normalizedHref).then(result => ({
-        name,
-        status: result.status,
-        url: result.url
-      }))
-    );
   });
  
   try {
@@ -103,13 +110,16 @@ async function extractPeople() {
   }
 }
 
+// target 주소 판별 함수
 function isTargetUrl(href) {
   const isProfile = href.includes('/profiles/');
   const isContact = href.includes('contact/');
   return isProfile || isContact;
 }
 
+// URL 정규화
 function normalizeUrl(href) {
+  if (href.startsWith('javascript:')) return href; // 스크립트 형태 주소 보존
   if (href.startsWith(RMIT_DOMAIN)) {
     href = href.substring(RMIT_DOMAIN.length);
   }
@@ -119,13 +129,12 @@ function normalizeUrl(href) {
   return href;
 }
  
+// 불필요 영역 제거 로직 개선
 function removeUnwantedAreas(container) {
-  // [수정] 본문 데이터가 유실되지 않도록 태그 기반 무차별 삭제 대신, 
-  // 상·하단 레이아웃 명확한 클래스/ID 영역 위주로 삭제 대상을 변경했습니다.
   const selectors = [
-    'script', 'style', 'svg', 'header', 'footer',
-    '.top-nav__wrapper', '#root-experiencefragment', '#campaign-notification-master',
-    '.top-nav', '.breadcrumb', '.breadcrumbs', '.footer'
+    'script', 'style', 'header', 'footer',
+    '#root-experiencefragment', '#campaign-notification-master',
+    '.breadcrumb', '.breadcrumbs', '.footer'
   ];
  
   selectors.forEach(selector => {
@@ -133,9 +142,10 @@ function removeUnwantedAreas(container) {
   });
 }
  
+// URL 최종 목적지 분석 (Profiles / Contact 분기 처리)
 async function resolveUrl(url) {
-  if (!url || url.trim() === '') {
-    return { status: 'No link', url: '' };
+  if (!url || url.trim() === '' || url.startsWith('javascript:')) {
+    return { status: 'Button/Script Link', url: url };
   }
  
   url = url.trim();
@@ -183,7 +193,7 @@ async function resolveUrl(url) {
     }
   }
  
-  return { status: 'Not a profile page', url: url };
+  return { status: 'Page Link', url: url };
 }
  
 function cleanText(text) {
@@ -204,7 +214,7 @@ function renderResults(rows) {
   tbody.innerHTML = '';
  
   if (rows.length === 0) {
-    status.textContent = 'No people found.';
+    status.textContent = 'No data extracted.';
     return;
   }
  
@@ -259,7 +269,7 @@ function copyText(text, buttonElement) {
     })
     .catch(err => {
       console.error('Could not copy text: ', err);
-      alert('Copy failed. Please copy manually.');
+      alert('Copy failed.');
     });
 }
  
