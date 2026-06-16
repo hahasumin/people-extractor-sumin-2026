@@ -25,14 +25,14 @@ async function extractPeople() {
  
   const tasks = [];
 
-  // 본문 내의 모든 요소를 HTML 순서대로 탐색하기 위해 전체 트리를 훑습니다.
+  // 본문 내의 모든 요소를 HTML 순서대로 탐색
   const allElements = container.querySelectorAll('*');
   const visitedElements = new Set();
 
   allElements.forEach(el => {
     if (visitedElements.has(el)) return;
 
-    // 1. 만약 요소가 리스트 아이템(<li>)인 경우
+    // 1. 리스트 아이템(<li>)인 경우 - 링크 유무 상관없이 무조건 파싱 시도
     if (el.tagName.toLowerCase() === 'li') {
       el.querySelectorAll('*').forEach(child => visitedElements.add(child));
       visitedElements.add(el);
@@ -41,7 +41,7 @@ async function extractPeople() {
       let href = anchor ? anchor.getAttribute('href') : null;
       if (href) href = href.trim();
 
-      // Case A: 리스트 아이템 내부에 우리가 찾는 프로필/스태프 링크가 존재하는 경우
+      // Case A: 리스트 내부에 타겟 주소(프로필/스태프)가 명확히 있는 경우
       if (href && isTargetUrl(href)) {
         let name = el.textContent; 
         name = cleanName(name);
@@ -55,31 +55,36 @@ async function extractPeople() {
           }))
         );
       } 
-      // Case B: 리스트 내부에 링크는 없지만, 프로필/스태프 리스트 영역으로 의심되는 경우 (텍스트만 존재)
+      // Case B: [직원 편의용 핵심 변경] 링크가 없거나 일반 링크인 리스트 아이템도 이름 형태면 다 가져옴!
       else {
         let name = el.textContent;
         name = cleanName(name);
 
-        if (name && name.length < 100) {
-          const parentUl = el.closest('ul, ol');
-          const isProfileArea = parentUl && (
-            parentUl.innerHTML.includes('/profiles/') || 
-            parentUl.innerHTML.includes('contact/staff-contacts/academic-staff')
-          );
+        // 메뉴 전체 글이나 소셜 공유 단어 같은 명백한 노이즈가 아니고, 글자 수가 적당하면 인물로 간주
+        if (name && name.length > 1 && name.length < 60) {
+          const lowerName = name.toLowerCase();
+          // 푸터 링크나 시스템 버튼 문구 필터링
+          const isNoise = lowerName.includes('twitter') || 
+                          lowerName.includes('facebook') || 
+                          lowerName.includes('instagram') || 
+                          lowerName.includes('linkedin') ||
+                          lowerName.includes('cookie') ||
+                          lowerName.includes('privacy') ||
+                          lowerName.includes('terms of');
 
-          if (isProfileArea) {
+          if (!isNoise) {
             tasks.push(
               Promise.resolve({
                 name: name,
-                status: 'Text Only (No Link)',
-                url: '[Link 없음]'
+                status: 'Text/General Link',
+                url: (href && !href.startsWith('javascript:')) ? href : '[Link 없음]'
               })
             );
           }
         }
       }
     } 
-    // 2. 리스트(li)가 아닌 일반 카드(.icon-feature)나 단독 CTA 버튼인 경우
+    // 2. 리스트(li)가 아닌 단독 카드(.icon-feature)나 개별 CTA 버튼인 경우
     else if (el.tagName.toLowerCase() === 'a') {
       visitedElements.add(el);
       let href = el.getAttribute('href');
@@ -143,7 +148,7 @@ function normalizeUrl(href) {
   return href;
 }
  
-// 불필요 영역 제거 로직
+// 불필요 영역 제거 로직 (GNAV, FOOTER 등 기본 컴포넌트 1차 청소)
 function removeUnwantedAreas(container) {
   const selectors = [
     'script', 'style', 'header', 'footer',
@@ -156,7 +161,7 @@ function removeUnwantedAreas(container) {
   });
 }
  
-// URL 최종 목적지 분석 및 베트남 경로 최우선 대응 수정
+// URL 최종 목적지 분석 (베트남 경로 최우선 대응)
 async function resolveUrl(url, currentName) {
   if (!url || url.trim() === '' || url.startsWith('javascript:')) {
     return { name: currentName, status: 'Button/Script Link', url: url };
@@ -164,13 +169,10 @@ async function resolveUrl(url, currentName) {
  
   url = url.trim();
 
-  // [핵심 변경 1] 주소가 이미 베트남 AEM 경로(/content/rmit/vn/en)로 시작하는 경우
-  // 그대로 보존하여 즉시 결과로 반환합니다.
   if (url.startsWith('/content/rmit/vn/en')) {
     return { name: currentName, status: 'VN Profile (AEM)', url: url };
   }
  
-  // 2. 풀 도메인 형태의 베트남 프로필 주소인 경우 처리
   if (url.startsWith('https://www.rmit.edu.vn/profiles/') || url.startsWith('http://www.rmit.edu.vn/profiles/')) {
     const cleanPath = url.replace('https://www.rmit.edu.vn', '').replace('http://www.rmit.edu.vn', '');
     return {
@@ -180,7 +182,6 @@ async function resolveUrl(url, currentName) {
     };
   }
  
-  // 3. 호주 내부 상대 경로 프로필 주소인 경우 (/content/rmit/au/en 적용)
   if (url.startsWith('/profiles/')) {
     return { name: currentName, status: 'Profile', url: AEM_AU_PREFIX + url };
   }
@@ -193,7 +194,6 @@ async function resolveUrl(url, currentName) {
     };
   }
  
-  // 4. 지정된 Academic Staff 주소인 경우 -> Worker를 거쳐 리다이렉트 추적
   if (url.includes('contact/staff-contacts/academic-staff')) {
     try {
       let targetUrl = url;
@@ -214,9 +214,7 @@ async function resolveUrl(url, currentName) {
  
       const finalUrl = data.finalUrl;
       
-      // [핵심 변경 2] Worker 추적 끝에 나온 주소가 베트남 AEM 경로이거나 풀 도메인일 때 대응
       if (finalUrl.includes('/content/rmit/vn/en')) {
-        // 이미 AEM 경로가 포함되어 있다면 해당 상대 경로만 잘라내서 저장
         const vnPathIndex = finalUrl.indexOf('/content/rmit/vn/en');
         return {
           name: currentName,
@@ -228,121 +226,4 @@ async function resolveUrl(url, currentName) {
         return {
           name: currentName,
           status: 'Redirected VN Profile',
-          url: finalUrl.replace(RMIT_VN_DOMAIN, AEM_VN_PREFIX)
-        };
-      }
-
-      // 리다이렉트 결과가 호주 프로필인 경우
-      if (finalUrl.startsWith('https://www.rmit.edu.au/profiles/')) {
-        return {
-          name: currentName,
-          status: 'Redirected Profile',
-          url: finalUrl.replace(RMIT_AU_DOMAIN, AEM_AU_PREFIX)
-        };
-      }
- 
-      return { name: currentName, status: 'Resolved Destination', url: finalUrl };
-    } catch (error) {
-      console.error(error);
-      return { name: currentName, status: 'Redirect Error', url: url };
-    }
-  }
- 
-  return { name: currentName, status: 'Link', url: url };
-}
- 
-function cleanText(text) {
-  return String(text)
-    .replace(/\u00a0/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
- 
-function cleanName(name) {
-  let t = cleanText(name);
-  t = t.replace(/view profile/i, '')
-       .replace(/find out more/i, '')
-       .replace(/read more/i, '')
-       .trim();
-  return t;
-}
- 
-function renderResults(rows) {
-  const tbody = document.getElementById('results');
-  const status = document.getElementById('status');
- 
-  tbody.innerHTML = '';
- 
-  if (rows.length === 0) {
-    status.textContent = 'No data extracted.';
-    return;
-  }
- 
-  rows.forEach(row => {
-    const tr = document.createElement('tr');
- 
-    const tdName = document.createElement('td');
-    tdName.textContent = row.name;
-    tr.appendChild(tdName);
- 
-    const tdCopyName = document.createElement('td');
-    const btnCopyName = document.createElement('button');
-    btnCopyName.textContent = 'Copy';
-    btnCopyName.addEventListener('click', () => copyText(row.name, btnCopyName));
-    tdCopyName.appendChild(btnCopyName);
-    tr.appendChild(tdCopyName);
- 
-    const tdStatus = document.createElement('td');
-    tdStatus.textContent = row.status;
-    tr.appendChild(tdStatus);
- 
-    const tdUrl = document.createElement('td');
-    tdUrl.textContent = row.url;
-    tr.appendChild(tdUrl);
- 
-    const tdCopyUrl = document.createElement('td');
-    const btnCopyUrl = document.createElement('button');
-    btnCopyUrl.textContent = 'Copy';
-    
-    if (row.url === '[Link 없음]') {
-      btnCopyUrl.disabled = true;
-      btnCopyUrl.style.opacity = '0.5';
-      btnCopyUrl.style.cursor = 'not-allowed';
-    } else {
-      btnCopyUrl.addEventListener('click', () => copyText(row.url, btnCopyUrl));
-    }
-    
-    tdCopyUrl.appendChild(btnCopyUrl);
-    tr.appendChild(tdCopyUrl);
- 
-    tbody.appendChild(tr);
-  });
- 
-  status.textContent = `${rows.length} result(s) found.`;
-}
- 
-function copyText(text, buttonElement) {
-  navigator.clipboard.writeText(text)
-    .then(() => {
-      const originalText = buttonElement.textContent;
-      buttonElement.textContent = 'Copied!';
-      buttonElement.style.backgroundColor = '#4CAF50';
-      buttonElement.style.color = 'white';
-       
-      setTimeout(() => {
-        buttonElement.textContent = originalText;
-        buttonElement.style.backgroundColor = '';
-        buttonElement.style.color = '';
-      }, 1200);
-    })
-    .catch(err => {
-      console.error('Could not copy text: ', err);
-      alert('Copy failed.');
-    });
-}
- 
-function clearAll() {
-  document.getElementById('htmlInput').value = '';
-  document.getElementById('results').innerHTML = '';
-  document.getElementById('status').textContent = 'No results yet.';
-}
+          url: finalUrl.replace(RMIT
